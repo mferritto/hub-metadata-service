@@ -1,0 +1,12 @@
+version: 0.0
+os: linux
+files:
+  - source: /scheduler.war
+    destination: /opt/apache-tomcat/webapps/
+hooks:
+  ApplicationStop:
+    - location: deregister_from_elb.sh
+    - location: stop_tomcat.sh
+  ApplicationStart:
+    - location: start_tomcat.sh
+    - location: register_with_elb.sh

@@ -1,0 +1,421 @@
+<project name="hub-metadata-service" default="dist" basedir="." xmlns:ivy="antlib:org.apache.ivy.ant" xmlns:jacoco="antlib:org.jacoco.ant" xmlns:sonar="antlib:org.sonar.ant">
+
+	<!-- specify properties in build.properties -->
+	<property file="build.properties" />
+	
+	<presetdef name="javac">
+	    <javac includeantruntime="true" />
+	  </presetdef>
+
+
+	<!-- Ivy task definitions -->
+	<taskdef name="ivy-configure" classname="org.apache.ivy.ant.IvyConfigure" />
+	<taskdef name="ivy-resolve" classname="org.apache.ivy.ant.IvyResolve" />
+	<taskdef name="ivy-retrieve" classname="org.apache.ivy.ant.IvyRetrieve" />
+	<taskdef name="ivy-cleancache" classname="org.apache.ivy.ant.IvyCleanCache" />
+
+	<!-- Identify the Ivy settings file to use -->
+	<ivy:settings file="${ivySettingsFile}" />
+
+	<!-- Ivy "resolve" task; resolve all project dependencies and cache them -->
+	<target name="resolve">
+		<delete>
+			<fileset dir="${mainLibDir}" includes="*.jar" />
+		</delete>
+		<ivy:resolve file="${descriptorFile}" conf="${ivyResolveConfigs}" />
+		<ivy:retrieve pattern="${ivyRetrievePattern}" conf="${ivyRetrieveConfigs}" />
+	</target>
+
+	<target name="test-resolve">
+		<delete>
+			<fileset dir="${testLibDir}" includes="*.jar" />
+		</delete>
+		<ivy:resolve file="test-ivy.xml" conf="compile" />
+		<ivy:retrieve pattern="${testLibDir}/[artifact]-[type]-[revision].[ext]" conf="compile" />
+	</target>
+
+	<!-- Ivy "cleancache" task; to be used with caution. Flushes local cache completely -->
+	<target name="clean-ivy-cache">
+		<ivy:cleancache />
+	</target>
+
+	<property environment="env" />
+	<property name="tomcatHome" value="${env.CATALINA_HOME}" />
+	<property name="tomcatDeploy" value="${tomcatHome}/webapps" />
+
+	<!-- output filenames -->
+	<property name="dist.war" value="metadata.war" />
+
+	<target name="deploy-local">
+		<antcall target="dist" />
+		<antcall target="deploy" />
+	</target>
+
+	<!-- deploy to tomcat -->
+	<target name="deploy">
+		<copy file="${distDir}/${dist.war}" todir="${tomcatDeploy}/" />
+	</target>
+
+	<!-- main build classpath -->
+	<path id="build.class.path">
+		<fileset dir="${envLibDir}">
+			<include name="**/*.jar" />
+		</fileset>
+		<fileset dir="${testLibDir}">
+			<include name="**/*.jar" />
+		</fileset>
+		<fileset dir="${mainLibDir}">
+			<include name="**/*.jar" />
+		</fileset>
+	</path>
+
+
+	<taskdef name="groovyc" classname="org.codehaus.groovy.ant.Groovyc" classpathref="build.class.path" />
+	<taskdef name="groovy" classpathref="build.class.path" classname="org.codehaus.groovy.ant.Groovy" />
+
+
+	<!-- runtime build classpath (for executing your app from this build script - the 'run' target)  -->
+	<path id="runtime.class.path">
+		<fileset dir="${mainLibDir}">
+			<include name="**/*.jar" />
+		</fileset>
+	</path>
+
+	<!-- test build classpath -->
+	<path id="test.class.path">
+		<fileset dir="${envLibDir}">
+			<include name="**/*.jar" />
+		</fileset>
+		<fileset dir="${mainLibDir}">
+			<include name="**/*.jar" />
+		</fileset>
+		<fileset dir="${testLibDir}">
+			<include name="**/*.jar" />
+		</fileset>
+	</path>
+
+	<!-- cobertura classpath -->
+	<path id="cobertura.class.path">
+		<fileset dir="${testLibDir}">
+			<include name="**/*.jar" />
+		</fileset>
+		<fileset dir="${envLibDir}">
+			<include name="**/*.jar" />
+		</fileset>
+		<fileset dir="${mainLibDir}">
+			<include name="**/*.jar" />
+		</fileset>
+		<pathelement location="${genCoberturaInstrumentedClassesDir}" />
+		<!--<pathelement location="${mainJavaSrcDir}"/>
+		<pathelement location="${mainGroovySrcDir}"/> -->
+	</path>
+
+	<!-- Clean out previously built project files and javadoc -->
+	<target name="clean">
+
+		<!-- Deletes the folder containing the packaged final result -->
+		<delete dir="${distDir}" quiet="true" />
+
+		<!-- Deletes the folder containing the compiled Java -->
+		<delete dir="${buildDir}" quiet="true" />
+
+		<!-- remove all generated files -->
+		<delete dir="${genDir}" quiet="true" />
+	</target>
+
+	<!-- Setup Steps Required Before Compilation -->
+	<target name="init" depends="clean">
+
+		<!-- creates the folder to contain the compiled unit test Java source -->
+		<mkdir dir="${testBuildDir}" />
+
+		<!-- creates the folder to contain the compiled Java source -->
+		<mkdir dir="${mainBuildDir}" />
+
+		<!-- creates the folder to contain the packaged final result (JAR file) -->
+		<mkdir dir="${distDir}" />
+
+		<!-- creates (generated/docs/javadoc) -->
+		<mkdir dir="${genJavadocDir}" />
+
+		<mkdir dir="${genGroovydocDir}" />
+
+		<!-- creates (generated/src/main/java) -->
+		<mkdir dir="${genMainJavaSrcDir}" />
+
+		<!-- creates (generated/data/cobertura) -->
+		<mkdir dir="${genCoberturaDataFileDir}" />
+
+		<!-- creates (generated/reports/unit-test/raw-xml) -->
+		<mkdir dir="${genRawUnitTestReportsDir}" />
+
+		<!-- creates (generated/reports/unit-test/formatted) -->
+		<mkdir dir="${genFormattedUnitTestReportsDir}" />
+
+		<!-- creates (generated/reports/coverage) -->
+		<mkdir dir="${genCoberturaReportsDir}" />
+
+		<!-- creates (generated/instrumented-bin/cobertura) -->
+		<mkdir dir="${genCoberturaInstrumentedClassesDir}" />
+	</target>
+
+	<!-- Runs the program - i.e. the main() method found in ${mainClass} -->
+	<target name="run" depends="compile">
+		<java includeantruntime="true" classname="${mainClass}" fork="true">
+			<classpath refid="build.class.path" />
+			<classpath>
+				<pathelement location="${mainBuildDir}" />
+			</classpath>
+
+			<!-- this is here for convenience - USUALLY you'll want a log4j.properties file specified -->
+			<jvmarg value="-Dlog4j.configuration=file:${mainConfigSrcDir}/log4j.properties" />
+		</java>
+	</target>
+
+	<!-- compiles java sources -->
+	<target name="compile" depends="init,resolve">
+		<javac destdir="${mainBuildDir}">
+			<src path="${mainGroovySrcDir}" />
+			<classpath>
+				<path refid="build.class.path" />
+				<pathelement path="${mainBuildDir}" />
+			</classpath>
+		</javac>
+		<groovyc destdir="${mainBuildDir}">
+			<src path="${mainGroovySrcDir}" />
+			<classpath>
+				<path refid="build.class.path" />
+				<pathelement path="${mainBuildDir}" />
+			</classpath>
+		</groovyc>
+	</target>
+
+	<!-- compiles java unit test sources -->
+	<target name="test-compile" depends="compile,test-resolve">
+		<groovyc destdir="${testBuildDir}">
+			<src path="${testGroovySrcDir}" />
+			<classpath>
+				<path refid="test.class.path" />
+				<pathelement path="${testBuildDir}" />
+				<pathelement location="${mainBuildDir}" />
+			</classpath>
+		</groovyc>
+	</target>
+
+	<!-- Make project WAR file -->
+	<target name="dist" depends="clean,compile">
+
+		<!-- build the WAR file -->
+		<war warfile="${distDir}/${dist.war}" webxml="${mainConfigSrcDir}/web.xml">
+
+			<!-- needed JARs -->
+			<lib dir="${mainLibDir}">
+				<include name="**/*.jar" />
+			</lib>
+
+			<lib dir="${envLibDir}">
+				<include name="**/*.jar" />
+			</lib>
+
+			<classes dir="${mainConfigSrcDir}">
+				<include name="log4j.properties" />
+				<include name="metadata*.xml" />
+			</classes>
+
+			<!-- Java class files (and other configuration files 
+			     that sit on the classpath) -->
+			<classes dir="${mainBuildDir}" />
+
+			<!-- configuration files  -->
+			<webinf dir="${mainConfigSrcDir}">
+				<include name="**/*.*" />
+
+				<!-- we exclude these since they've already been added -->
+				<exclude name="web.xml" />
+				<exclude name="log4j.properties" />
+				<exclude name="context.xml" />
+			</webinf>
+
+			<metainf dir="${mainConfigSrcDir}">
+				<include name="context.xml" />
+			</metainf>
+
+			<zipfileset dir="${mainResourcesDir}" prefix="resources" />
+		</war>
+	</target>
+	
+	<target name="create-code-deploy-zip" depends="dist">
+		<zip destfile="${distDir}/metadata.zip">
+			<fileset dir="${codeDeployZip}"/>
+			<fileset dir="dist" includes="metadata.war"/>
+		</zip>
+	</target>
+
+	<taskdef name="groovydoc" classname="org.codehaus.groovy.ant.Groovydoc" classpathref="build.class.path" />
+
+	<!-- Make the GroovyDoc -->
+	<target name="groovydoc" depends="init,resolve">
+		<!-- generate the groovydoc -->
+		<groovydoc sourcepath="${mainGroovySrcDir}" packagenames="${javadocPackageNames}" destdir="${genGroovydocDir}" private="true" />
+	</target>
+
+	<target name="runCodeNarc">
+		<taskdef name="codenarc" classname="org.codenarc.ant.CodeNarcTask" classpathref="test.class.path" />
+
+		<codenarc ruleSetFiles="rulesets/basic.xml,rulesets/exceptions.xml,rulesets/imports.xml" maxPriority1Violations="0">
+
+			<report type="html">
+				<option name="outputFile" value="${genCodeNardReportsDir}/CodeNarcAntReport.html" />
+				<option name="title" value="ValidationEngine-CodeNarc" />
+			</report>
+
+			<fileset dir="${mainGroovySrcDir}">
+				<include name="**/*.groovy" />
+			</fileset>
+		</codenarc>
+	</target>
+
+
+	<!--==========================================================
+	UNIT TESTING w/ Cobertura Code Coverage
+	===========================================================-->
+	<!-- cobertura classpath -->
+	<path id="cobertura.class.path">
+		<fileset dir="${testLibDir}">
+			<include name="**/*.jar" />
+		</fileset>
+	</path>
+
+	<!-- unit test the codebase -->
+	<target name="test" depends="test-compile">
+
+		<!-- invoke the "code-coverage-setup" target -->
+		<antcall target="code-coverage-setup" />
+
+		<!-- run all junit tests using instrumented classes -->
+		<junit fork="true" forkmode="perBatch" printsummary="yes" haltonfailure="no" failureproperty="tests.failed">
+			<jvmarg value="-Xms1g" />
+			<jvmarg value="-Xmx1g" />
+			<jvmarg value="-XX:MaxPermSize=256M" />
+
+			<sysproperty key="net.sourceforge.cobertura.datafile" file="${genCoberturaDataFileDir}/${coberturaDataFileName}" />
+
+			<!-- define the classpath for junit to use -->
+			<classpath>
+
+				<!-- put instrumented classes onto the classpath first (the
+									 "cobertura-instrument" task only moves classes over to the
+									 "to-dir" location; interfaces are omitted.  Therefore we
+									 need to add the various output-folders to the classpath so the
+									 interface .class files are also added to the classpath; the
+									 trick is to add the instrumented-classes to the classpath
+									 first so they are loaded instead of the non-instrumented classes.  -->
+				<pathelement location="${genCoberturaInstrumentedClassesDir}" />
+
+				<!-- put the various output-directories onto the classpath for the
+									   sake of the java interfaces (to reiterate the above comment, the only
+									   reason to have these 3 entries is so that the various interfaces
+									   are added to the classpath; the instrumented-classes folder added right
+									   above only puts the "classes" onto the classpath; the cobertura-instrument
+									   task ONLY moves the classes .class files to its "to-dir" location; the
+									   interface .class files are omitted. -->
+				<pathelement location="${mainBuildDir}" />
+
+				<!-- put JUnit test cases onto the classpath -->
+				<pathelement location="${testBuildDir}" />
+
+				<pathelement location="${mainConfigSrcDir}" />
+
+				<pathelement location="${testConfigSrcDir}" />
+				
+				<pathelement location="${mainResourcesDir}" />
+
+				<!-- put dependent jar files into the classpath -->
+				<path refid="test.class.path" />
+			</classpath>
+
+			<!-- use the xml formatter -->
+			<formatter type="xml" />
+
+			<!-- execute the tests -->
+			<batchtest todir="${genRawUnitTestReportsDir}">
+				<fileset dir="${testBuildDir}">
+					<include name="**/*Test.class" />
+				</fileset>
+			</batchtest>
+		</junit>
+
+		<!-- create the formatted unit test results-report -->
+		<junitreport todir="${genFormattedUnitTestReportsDir}">
+			<fileset dir="${genRawUnitTestReportsDir}">
+				<include name="TEST-*.xml" />
+			</fileset>
+			<report format="frames" todir="${genFormattedUnitTestReportsDir}" />
+		</junitreport>
+
+		<!-- create the formatted coverage report -->
+		<antcall target="code-coverage-report" />
+	</target>
+
+	<!-- instrument the codebase for coverage analysis -->
+	<target name="code-coverage-setup">
+
+		<!-- taskdef needed for Cobertura tasks -->
+		<taskdef classpathref="cobertura.class.path" resource="tasks.properties" />
+
+		<!-- instrument the classes excluding junit test-classes -->
+		<cobertura-instrument todir="${genCoberturaInstrumentedClassesDir}" datafile="${genCoberturaDataFileDir}/${coberturaDataFileName}">
+			<fileset dir="${mainBuildDir}">
+				<include name="**/*.class" />
+			</fileset>
+		</cobertura-instrument>
+	</target>
+
+	<!-- Generate code coverage report -->
+	<target name="code-coverage-report">
+
+		<!-- taskdef needed for Cobertura tasks -->
+		<taskdef classpathref="cobertura.class.path" resource="tasks.properties" />
+
+		<!-- create the coverage report -->
+		<cobertura-report format="html" destdir="${genCoberturaReportsDir}" datafile="${genCoberturaDataFileDir}/${coberturaDataFileName}">
+			<fileset dir="${mainGroovySrcDir}">
+				<include name="**/*.groovy" />
+			</fileset>
+		</cobertura-report>
+
+		<cobertura-report format="xml" destdir="${genCoberturaReportsDir}" datafile="${genCoberturaDataFileDir}/${coberturaDataFileName}">
+			<fileset dir="${mainGroovySrcDir}">
+				<include name="**/*.groovy" />
+			</fileset>
+		</cobertura-report>
+	</target>
+
+
+	<!--==========================================================
+		SonarQube
+		===========================================================-->
+
+	<!-- Encrypt properties file -->
+	<target name="encryptPropsFile" depends="compile">
+		<input message="Please enter full path to properties file:" addproperty="propsFileToEncrypt" />
+		<input message="Please enter the encryptor password: " addproperty="encPass" />
+
+		<groovy>
+			import org.jasypt.encryption.pbe.StandardPBEStringEncryptor
+			
+			def encryptor = new StandardPBEStringEncryptor()
+			encryptor.setPassword(properties['encPass'])
+			encryptor.setAlgorithm("PBEWithMD5AndDES")
+		 
+			Properties props = new Properties()
+			props.load(new FileInputStream(properties['propsFileToEncrypt']))
+
+			props.each { k, v ->
+				def eVal = encryptor.encrypt(v)
+				println "${k}=ENC(${eVal})"
+			}
+		</groovy>
+	</target>
+
+</project>
